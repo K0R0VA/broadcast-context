@@ -42,7 +42,7 @@ impl Message for LocalTrackMessage {
 }
 
 impl<A: Actor<Context = Self> + Handler<LocalTrackMessage>> BroadcastContext<A> {
-    pub async fn create_with_addr(line: &str, actor: A) -> anyhow::Result<(Addr<A>, String)> {
+    pub async fn create_with_addr(line: String, actor: A) -> anyhow::Result<(Addr<A>, String)> {
         let mailbox = Mailbox::default();
         let parts = ContextParts::new(mailbox.sender_producer());
         let context = Self {
@@ -51,7 +51,7 @@ impl<A: Actor<Context = Self> + Handler<LocalTrackMessage>> BroadcastContext<A> 
         let addr = context.address();
         let context_fut = ContextFut::new(context, actor, mailbox);
         let mut stream = BroadcastContextFuture::new(context_fut).await?;
-        let response = stream.setup(line).await?;
+        let response = stream.setup(&line).await?;
         tokio::task::spawn_local(async move {
             use futures::stream::StreamExt;
             while let Some(()) = stream.next().await {}
