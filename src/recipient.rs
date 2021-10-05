@@ -65,7 +65,7 @@ impl Recipient {
         })
     }
 
-    pub async fn get_response(&self, message: Arc<TrackLocalStaticRTP>) -> anyhow::Result<String> {
+    pub async fn get_response(self, message: Arc<TrackLocalStaticRTP>) -> anyhow::Result<(String, Self)> {
         let rtp_sender = self
             .peer_connection
             .add_track(Arc::clone(&message) as Arc<dyn TrackLocal + Send + Sync>)
@@ -116,6 +116,6 @@ impl Recipient {
         let local_description =
             local_description.ok_or_else(|| anyhow::anyhow!("not found local description"))?;
         let json_str = serde_json::to_string(&local_description)?;
-        Ok(json_str)
+        Ok((json_str, self))
     }
 }
