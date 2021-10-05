@@ -31,6 +31,8 @@ use webrtc::{
 
 pub mod recipient;
 
+pub use crate::recipient::Recipient;
+
 pub struct BroadcastContext<A: Actor<Context = Self>> {
     inner: ContextParts<A>,
 }
@@ -184,7 +186,7 @@ impl<A: Actor<Context = BroadcastContext<A>>> BroadcastContextFuture<A>
             ..Default::default()
         };
 
-        let connection = Rc::new(api.new_peer_connection(config).await?);
+        let connection = Arc::new(api.new_peer_connection(config).await?);
 
         Ok(Self {
             connection,
