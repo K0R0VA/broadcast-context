@@ -38,7 +38,7 @@ pub struct BroadcastContext<A: Actor<Context = Self>> {
 }
 
 pub struct LocalTrackMessage {
-    local_track: Arc<TrackLocalStaticRTP>,
+    pub local_track: Arc<TrackLocalStaticRTP>,
 }
 
 impl Message for LocalTrackMessage {

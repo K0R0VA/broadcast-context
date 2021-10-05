@@ -15,7 +15,7 @@ use webrtc::{
     },
 };
 
-use crate::LocalTrackMessage;
+use webrtc::media::track::track_local::track_local_static_rtp::TrackLocalStaticRTP;
 
 pub struct Recipient {
     peer_connection: RTCPeerConnection,
@@ -65,10 +65,10 @@ impl Recipient {
         })
     }
 
-    pub async fn get_response(&self, message: LocalTrackMessage) -> anyhow::Result<String> {
+    pub async fn get_response(&self, message: Arc<TrackLocalStaticRTP>) -> anyhow::Result<String> {
         let rtp_sender = self
             .peer_connection
-            .add_track(Arc::clone(&message.local_track) as Arc<dyn TrackLocal + Send + Sync>)
+            .add_track(Arc::clone(&message) as Arc<dyn TrackLocal + Send + Sync>)
             .await?;
 
         // Read incoming RTCP packets
