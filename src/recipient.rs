@@ -1,9 +1,6 @@
 use std::sync::{Arc, Weak};
 
-use actix::{
-    Actor, ActorFutureExt, Addr, AsyncContext, Context, Handler, Message,
-    WrapFuture,
-};
+use actix::{Actor, ActorFutureExt, Addr, AsyncContext, Context, Handler, Message, WrapFuture, dev::ToEnvelope};
 use interceptor::registry::Registry;
 use webrtc::{
     api::{
@@ -87,8 +84,9 @@ impl<A: Actor + Handler<RecipientResponse>> Message for RecipientLocalTrackMessa
     type Result = ();
 }
 
-impl<A: Actor<Context = Context<A>> + Handler<RecipientResponse>>
+impl<C, A: Actor<Context = C> + Handler<RecipientResponse>>
     Handler<RecipientLocalTrackMessage<A>> for Recipient
+    where C: AsyncContext<A> + ToEnvelope<A, RecipientResponse>
 {
     type Result = ();
     fn handle(
