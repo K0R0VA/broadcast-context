@@ -1,7 +1,6 @@
-use std::{
-    sync::{Arc, Weak},
-};
+use std::sync::{Arc, Weak};
 
+use actix::{Actor, ActorFutureExt, Addr, AsyncContext, Context, Handler, Message, WrapFuture};
 use interceptor::registry::Registry;
 use webrtc::{
     api::{
@@ -18,7 +17,7 @@ use webrtc::{
 use webrtc::media::track::track_local::track_local_static_rtp::TrackLocalStaticRTP;
 
 pub struct Recipient {
-    peer_connection: RTCPeerConnection,
+    peer_connection: Arc<RTCPeerConnection>,
     description: Weak<RTCSessionDescription>,
 }
 
@@ -57,65 +56,98 @@ impl Recipient {
         };
 
         // Create a new RTCPeerConnection
-        let peer_connection = api.new_peer_connection(config).await?;
+        let peer_connection = Arc::new(api.new_peer_connection(config).await?);
 
         Ok(Self {
             peer_connection,
             description,
         })
     }
+}
 
-    pub async fn get_response(&self, message: Arc<TrackLocalStaticRTP>) -> anyhow::Result<String> {
-        let rtp_sender = self
-            .peer_connection
-            .add_track(Arc::clone(&message) as Arc<dyn TrackLocal + Send + Sync>)
-            .await?;
+impl Actor for Recipient {
+    type Context = Context<Self>;
+}
 
-        // Read incoming RTCP packets
-        // Before these packets are returned they are processed by interceptors. For things
-        // like NACK this needs to be called.
-        tokio::spawn(async move {
-            let mut rtcp_buf = vec![0u8; 1500];
-            while let Ok((_, _)) = rtp_sender.read(&mut rtcp_buf).await {}
-            anyhow::Result::<()>::Ok(())
-        });
+pub struct RecipientResponse(pub String);
 
-        // Set the handler for Peer connection state
-        // This will notify you when the peer has connected/disconnected
-        self.peer_connection
-            .on_peer_connection_state_change(Box::new(move |s: RTCPeerConnectionState| {
-                print!("Peer Connection State has changed: {}\n", s);
-                Box::pin(async {})
-            }))
-            .await;
-        let local_description = Arc::try_unwrap(
-            self.description
-                .upgrade()
-                .ok_or_else(|| anyhow::anyhow!("local description is empty"))?,
-        ).map_err(|_| anyhow::anyhow!("unwraped local_description"))?;
-        // Set the remote SessionDescription
-        self.peer_connection
-            .set_remote_description(local_description)
-            .await?;
+impl Message for RecipientResponse {
+    type Result = ();
+}
 
-        // Create an answer
-        let answer = self.peer_connection.create_answer(None).await?;
+pub struct RecipientLocalTrackMessage<A: Actor + Handler<RecipientResponse>> {
+    pub address: Addr<A>,
+    pub local_track: Arc<TrackLocalStaticRTP>,
+}
 
-        // Create channel that is blocked until ICE Gathering is complete
-        let mut gather_complete = self.peer_connection.gathering_complete_promise().await;
+impl<A: Actor + Handler<RecipientResponse>> Message for RecipientLocalTrackMessage<A> {
+    type Result = ();
+}
 
-        // Sets the LocalDescription, and starts our UDP listeners
-        self.peer_connection.set_local_description(answer).await?;
+impl<A: Actor<Context = Context<A>> + Handler<RecipientResponse>>
+    Handler<RecipientLocalTrackMessage<A>> for Recipient
+{
+    type Result = ();
+    fn handle(
+        &mut self,
+        msg: RecipientLocalTrackMessage<A>,
+        ctx: &mut Self::Context,
+    ) -> Self::Result {
+        let peer_connection = Arc::clone(&self.peer_connection);
+        let description = Arc::clone(&self.description.upgrade().unwrap());
+        ctx.wait(
+            async move {
+                let rtp_sender = peer_connection
+                    .add_track(Arc::clone(&msg.local_track) as Arc<dyn TrackLocal + Send + Sync>)
+                    .await?;
 
-        // Block until ICE Gathering is complete, disabling trickle ICE
-        // we do this because we only can exchange one signaling message
-        // in a production application you should exchange ICE Candidates via OnICECandidate
-        let _ = gather_complete.recv().await;
+                // Read incoming RTCP packets
+                // Before these packets are returned they are processed by interceptors. For things
+                // like NACK this needs to be called.
+                tokio::spawn(async move {
+                    let mut rtcp_buf = vec![0u8; 1500];
+                    while let Ok((_, _)) = rtp_sender.read(&mut rtcp_buf).await {}
+                    anyhow::Result::<()>::Ok(())
+                });
 
-        let local_description = self.peer_connection.local_description().await;
-        let local_description =
-            local_description.ok_or_else(|| anyhow::anyhow!("not found local description"))?;
-        let json_str = serde_json::to_string(&local_description)?;
-        Ok(json_str)
+                // Set the handler for Peer connection state
+                // This will notify you when the peer has connected/disconnected
+                peer_connection
+                    .on_peer_connection_state_change(Box::new(move |s: RTCPeerConnectionState| {
+                        print!("Peer Connection State has changed: {}\n", s);
+                        Box::pin(async {})
+                    }))
+                    .await;
+                let local_description = Arc::try_unwrap(description)
+                    .map_err(|_| anyhow::anyhow!("unwraped local_description"))?;
+                // Set the remote SessionDescription
+                peer_connection
+                    .set_remote_description(local_description)
+                    .await?;
+
+                // Create an answer
+                let answer = peer_connection.create_answer(None).await?;
+
+                // Create channel that is blocked until ICE Gathering is complete
+                let mut gather_complete = peer_connection.gathering_complete_promise().await;
+
+                // Sets the LocalDescription, and starts our UDP listeners
+                peer_connection.set_local_description(answer).await?;
+
+                // Block until ICE Gathering is complete, disabling trickle ICE
+                // we do this because we only can exchange one signaling message
+                // in a production application you should exchange ICE Candidates via OnICECandidate
+                let _ = gather_complete.recv().await;
+
+                let local_description = peer_connection.local_description().await;
+                let local_description = local_description
+                    .ok_or_else(|| anyhow::anyhow!("not found local description"))?;
+                let json_str = serde_json::to_string(&local_description)?;
+                msg.address.send(RecipientResponse(json_str)).await?;
+                anyhow::Result::<(), anyhow::Error>::Ok(())
+            }
+            .into_actor(self)
+            .then(|_, _, _| actix::fut::ready(())),
+        )
     }
 }
