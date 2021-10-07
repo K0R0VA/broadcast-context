@@ -1,6 +1,9 @@
 use std::sync::{Arc, Weak};
 
-use actix::{Actor, ActorFutureExt, Addr, AsyncContext, Context, Handler, Message, WrapFuture};
+use actix::{
+    Actor, ActorFutureExt, Addr, AsyncContext, Context, Handler, Message,
+    WrapFuture,
+};
 use interceptor::registry::Registry;
 use webrtc::{
     api::{
